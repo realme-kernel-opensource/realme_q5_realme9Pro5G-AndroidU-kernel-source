@@ -63,6 +63,12 @@
 #include <trace/hooks/futex.h>
 
 /*
+#if IS_ENABLED(CONFIG_OPLUS_LOCKING_STRATEGY)
+#include <linux/sched_assist/sync/futex.h>
+#endif
+*/
+
+/*
  * READ this before attempting to hack on futexes!
  *
  * Basic futex operation and ordering guarantees
@@ -1417,7 +1423,7 @@ static int lookup_pi_state(u32 __user *uaddr, u32 uval,
 static int lock_pi_update_atomic(u32 __user *uaddr, u32 uval, u32 newval)
 {
 	int err;
-	u32 uninitialized_var(curval);
+	u32 curval;
 
 	if (unlikely(should_fail_futex(true)))
 		return -EFAULT;
@@ -1587,7 +1593,7 @@ static void mark_wake_futex(struct wake_q_head *wake_q, struct futex_q *q)
  */
 static int wake_futex_pi(u32 __user *uaddr, u32 uval, struct futex_pi_state *pi_state)
 {
-	u32 uninitialized_var(curval), newval;
+	u32 curval, newval;
 	struct task_struct *new_owner;
 	bool postunlock = false;
 	DEFINE_WAKE_Q(wake_q);
@@ -1686,6 +1692,11 @@ futex_wake(u32 __user *uaddr, unsigned int flags, int nr_wake, u32 bitset)
 	struct futex_q *this, *next;
 	union futex_key key = FUTEX_KEY_INIT;
 	int ret;
+/*
+#if IS_ENABLED(CONFIG_OPLUS_LOCKING_STRATEGY)
+	int target_nr;
+#endif
+*/
 	DEFINE_WAKE_Q(wake_q);
 
 	if (!bitset)
@@ -1702,7 +1713,11 @@ futex_wake(u32 __user *uaddr, unsigned int flags, int nr_wake, u32 bitset)
 		goto out_put_key;
 
 	spin_lock(&hb->lock);
-
+/*
+#if IS_ENABLED(CONFIG_OPLUS_LOCKING_STRATEGY)
+	locking_vh_futex_wake_traverse_plist(&hb->chain, &target_nr, key, bitset);
+#endif
+*/
 	plist_for_each_entry_safe(this, next, &hb->chain, list) {
 		if (match_futex (&this->key, &key)) {
 			if (this->pi_state || this->rt_waiter) {
@@ -1713,7 +1728,11 @@ futex_wake(u32 __user *uaddr, unsigned int flags, int nr_wake, u32 bitset)
 			/* Check if one of the bits is set in both bitsets */
 			if (!(this->bitset & bitset))
 				continue;
-
+/*
+#if IS_ENABLED(CONFIG_OPLUS_LOCKING_STRATEGY)
+			locking_vh_futex_wake_this(ret, nr_wake, target_nr, this->task);
+#endif
+*/
 			mark_wake_futex(&wake_q, this);
 			if (++ret >= nr_wake)
 				break;
@@ -1722,6 +1741,11 @@ futex_wake(u32 __user *uaddr, unsigned int flags, int nr_wake, u32 bitset)
 
 	spin_unlock(&hb->lock);
 	wake_up_q(&wake_q);
+/*
+#if IS_ENABLED(CONFIG_OPLUS_LOCKING_STRATEGY)
+	locking_vh_futex_wake_up_q_finish(nr_wake, target_nr);
+#endif
+*/
 out_put_key:
 	put_futex_key(&key);
 out:
@@ -2371,6 +2395,11 @@ static inline void __queue_me(struct futex_q *q, struct futex_hash_bucket *hb)
 
 	plist_node_init(&q->list, prio);
 	trace_android_vh_alter_futex_plist_add(&q->list, &hb->chain, &already_on_hb);
+/*
+#if IS_ENABLED(CONFIG_OPLUS_LOCKING_STRATEGY)
+	locking_vh_alter_futex_plist_add(&q->list, &hb->chain, &already_on_hb);
+#endif
+*/
 	if (!already_on_hb)
 		plist_add(&q->list, &hb->chain);
 	q->task = current;
@@ -2739,8 +2768,10 @@ static void futex_wait_queue_me(struct futex_hash_bucket *hb, struct futex_q *q,
 		 * flagged for rescheduling. Only call schedule if there
 		 * is no timeout, or if it has yet to expire.
 		 */
-		if (!timeout || timeout->task)
+		if (!timeout || timeout->task) {
 			freezable_schedule();
+		}
+
 	}
 	__set_current_state(TASK_RUNNING);
 }
@@ -2833,6 +2864,11 @@ static int futex_wait(u32 __user *uaddr, unsigned int flags, u32 val,
 	if (!bitset)
 		return -EINVAL;
 	q.bitset = bitset;
+/*
+#if IS_ENABLED(CONFIG_OPLUS_LOCKING_STRATEGY)
+	locking_vh_futex_wait_start(flags, bitset);
+#endif
+*/
 
 	to = futex_setup_timer(abs_time, &timeout, flags,
 			       current->timer_slack_ns);
@@ -2882,6 +2918,11 @@ out:
 		hrtimer_cancel(&to->timer);
 		destroy_hrtimer_on_stack(&to->timer);
 	}
+/*
+#if IS_ENABLED(CONFIG_OPLUS_LOCKING_STRATEGY)
+	locking_vh_futex_wait_end(flags, bitset);
+#endif
+*/
 	return ret;
 }
 
@@ -3089,7 +3130,7 @@ uaddr_faulted:
  */
 static int futex_unlock_pi(u32 __user *uaddr, unsigned int flags)
 {
-	u32 uninitialized_var(curval), uval, vpid = task_pid_vnr(current);
+	u32 curval, uval, vpid = task_pid_vnr(current);
 	union futex_key key = FUTEX_KEY_INIT;
 	struct futex_hash_bucket *hb;
 	struct futex_q *top_waiter;
@@ -3557,7 +3598,7 @@ err_unlock:
 static int handle_futex_death(u32 __user *uaddr, struct task_struct *curr,
 			      bool pi, bool pending_op)
 {
-	u32 uval, uninitialized_var(nval), mval;
+	u32 uval, nval, mval;
 	int err;
 
 	/* Futex address must be 32bit aligned */
@@ -3687,7 +3728,7 @@ static void exit_robust_list(struct task_struct *curr)
 	struct robust_list_head __user *head = curr->robust_list;
 	struct robust_list __user *entry, *next_entry, *pending;
 	unsigned int limit = ROBUST_LIST_LIMIT, pi, pip;
-	unsigned int uninitialized_var(next_pi);
+	unsigned int next_pi;
 	unsigned long futex_offset;
 	int rc;
 
@@ -3879,7 +3920,11 @@ long do_futex(u32 __user *uaddr, int op, u32 val, ktime_t *timeout,
 		if (!futex_cmpxchg_enabled)
 			return -ENOSYS;
 	}
-
+/*
+#if IS_ENABLED(CONFIG_OPLUS_LOCKING_STRATEGY)
+	locking_vh_do_futex(cmd, &flags, uaddr2);
+#endif
+*/
 	switch (cmd) {
 	case FUTEX_WAIT:
 		val3 = FUTEX_BITSET_MATCH_ANY;
@@ -3986,7 +4031,7 @@ static void compat_exit_robust_list(struct task_struct *curr)
 	struct compat_robust_list_head __user *head = curr->compat_robust_list;
 	struct robust_list __user *entry, *next_entry, *pending;
 	unsigned int limit = ROBUST_LIST_LIMIT, pi, pip;
-	unsigned int uninitialized_var(next_pi);
+	unsigned int next_pi;
 	compat_uptr_t uentry, next_uentry, upending;
 	compat_long_t futex_offset;
 	int rc;

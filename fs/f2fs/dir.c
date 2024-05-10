@@ -78,7 +78,8 @@ int f2fs_init_casefolded_name(const struct inode *dir,
 #ifdef CONFIG_UNICODE
 	struct f2fs_sb_info *sbi = F2FS_SB(dir->i_sb);
 
-	if (IS_CASEFOLDED(dir)) {
+	if (IS_CASEFOLDED(dir) &&
+	    !is_dot_dotdot(fname->usr_fname->name, fname->usr_fname->len)) {
 		fname->cf_name.name = f2fs_kmalloc(sbi, F2FS_NAME_LEN,
 						   GFP_NOFS);
 		if (!fname->cf_name.name)
@@ -983,6 +984,7 @@ int f2fs_fill_dentries(struct dir_context *ctx, struct f2fs_dentry_ptr *d,
 	struct f2fs_sb_info *sbi = F2FS_I_SB(d->inode);
 	struct blk_plug plug;
 	bool readdir_ra = sbi->readdir_ra == 1;
+	bool found_valid_dirent = false;
 	int err = 0;
 
 	bit_pos = ((unsigned long)ctx->pos % d->max);
@@ -997,13 +999,15 @@ int f2fs_fill_dentries(struct dir_context *ctx, struct f2fs_dentry_ptr *d,
 
 		de = &d->dentry[bit_pos];
 		if (de->name_len == 0) {
+			if (found_valid_dirent || !bit_pos) {
+				printk_ratelimited(
+					"%sF2FS-fs (%s): invalid namelen(0), ino:%u, run fsck to fix.",
+					KERN_WARNING, sbi->sb->s_id,
+					le32_to_cpu(de->ino));
+				set_sbi_flag(sbi, SBI_NEED_FSCK);
+			}
 			bit_pos++;
 			ctx->pos = start_pos + bit_pos;
-			printk_ratelimited(
-				"%sF2FS-fs (%s): invalid namelen(0), ino:%u, run fsck to fix.",
-				KERN_WARNING, sbi->sb->s_id,
-				le32_to_cpu(de->ino));
-			set_sbi_flag(sbi, SBI_NEED_FSCK);
 			continue;
 		}
 
@@ -1046,6 +1050,7 @@ int f2fs_fill_dentries(struct dir_context *ctx, struct f2fs_dentry_ptr *d,
 			f2fs_ra_node_page(sbi, le32_to_cpu(de->ino));
 
 		ctx->pos = start_pos + bit_pos;
+		found_valid_dirent = true;
 	}
 out:
 	if (readdir_ra)
@@ -1065,6 +1070,10 @@ static int f2fs_readdir(struct file *file, struct dir_context *ctx)
 	struct f2fs_dentry_ptr d;
 	struct fscrypt_str fstr = FSTR_INIT(NULL, 0);
 	int err = 0;
+#ifdef CONFIG_OPLUS_FEATURE_OF2FS
+	int readdir_ra = F2FS_I_SB(inode)->readdir_ra;
+	struct blk_plug plug;
+#endif
 
 	if (IS_ENCRYPTED(inode)) {
 		err = fscrypt_get_encryption_info(inode);
@@ -1080,12 +1089,20 @@ static int f2fs_readdir(struct file *file, struct dir_context *ctx)
 		err = f2fs_read_inline_dir(file, ctx, &fstr);
 		goto out_free;
 	}
+#ifdef CONFIG_OPLUS_FEATURE_OF2FS
+	if (readdir_ra == 1)
+		blk_start_plug(&plug);
+#endif
 
 	for (; n < npages; n++, ctx->pos = n * NR_DENTRY_IN_BLOCK) {
 
 		/* allow readdir() to be interrupted */
 		if (fatal_signal_pending(current)) {
 			err = -ERESTARTSYS;
+#ifdef CONFIG_OPLUS_FEATURE_OF2FS
+			if (readdir_ra == 1)
+				blk_finish_plug(&plug);
+#endif
 			goto out_free;
 		}
 		cond_resched();
@@ -1102,6 +1119,10 @@ static int f2fs_readdir(struct file *file, struct dir_context *ctx)
 				err = 0;
 				continue;
 			} else {
+#ifdef CONFIG_OPLUS_FEATURE_OF2FS
+				if (readdir_ra == 1)
+					blk_finish_plug(&plug);
+#endif
 				goto out_free;
 			}
 		}
@@ -1116,9 +1137,12 @@ static int f2fs_readdir(struct file *file, struct dir_context *ctx)
 			f2fs_put_page(dentry_page, 0);
 			break;
 		}
-
-		f2fs_put_page(dentry_page, 0);
+                f2fs_put_page(dentry_page, 0);
 	}
+#ifdef CONFIG_OPLUS_FEATURE_OF2FS
+	if (readdir_ra == 1)
+		blk_finish_plug(&plug);
+#endif
 out_free:
 	fscrypt_fname_free_buffer(&fstr);
 out:

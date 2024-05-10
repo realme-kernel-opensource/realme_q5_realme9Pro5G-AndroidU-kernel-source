@@ -12,6 +12,10 @@ obj-y     = fork.o exec_domain.o panic.o \
 	    notifier.o ksysfs.o cred.o reboot.o \
 	    async.o range.o smpboot.o ucount.o
 
+#ifdef CONFIG_OPLUS_FEATURE_PANIC_FLUSH
+obj-$(CONFIG_OPLUS_FEATURE_PANIC_FLUSH) += panic_flush.o
+#endif
+
 obj-$(CONFIG_MODULES) += kmod.o
 obj-$(CONFIG_MULTIUSER) += groups.o
 
@@ -19,6 +23,12 @@ ifdef CONFIG_FUNCTION_TRACER
 # Do not trace internal ftrace files
 CFLAGS_REMOVE_irq_work.o = $(CC_FLAGS_FTRACE)
 endif
+
+PGO_PROFILE_softirq.o := n
+PGO_PROFILE_module.o := n
+PGO_PROFILE_extable.o := n
+PGO_PROFILE_stacktrace.o := n
+PGO_PROFILE_stackleak.o := n
 
 # Prevents flicker of uninteresting __do_softirq()/__local_bh_disable_ip()
 # in coverage traces.
@@ -107,6 +117,7 @@ obj-$(CONFIG_BPF) += bpf/
 obj-$(CONFIG_SHADOW_CALL_STACK) += scs.o
 obj-$(CONFIG_CFI_CLANG) += cfi.o
 
+obj-$(CONFIG_PGO_CLANG) += pgo/
 obj-$(CONFIG_PERF_EVENTS) += events/
 
 obj-$(CONFIG_USER_RETURN_NOTIFIER) += user-return-notifier.o
@@ -122,8 +133,17 @@ obj-$(CONFIG_RSEQ) += rseq.o
 obj-$(CONFIG_SYSCTL_KUNIT_TEST) += sysctl-test.o
 
 obj-$(CONFIG_GCC_PLUGIN_STACKLEAK) += stackleak.o
+
+#ifdef OPLUS_FEATURE_SCHED_ASSIST
+obj-$(CONFIG_OPLUS_FEATURE_SCHED_ASSIST) += sched_assist/
+#endif /* OPLUS_FEATURE_SCHED_ASSIST */
+
 KASAN_SANITIZE_stackleak.o := n
 KCOV_INSTRUMENT_stackleak.o := n
+
+#ifdef OPLUS_FEATURE_SCHED_ASSIST
+obj-$(CONFIG_OPLUS_FEATURE_UIFRIST_HEAVYLOAD) += special_opt/
+#endif /* OPLUS_FEATURE_SCHED_ASSIST */
 
 $(obj)/configs.o: $(obj)/config_data.gz
 

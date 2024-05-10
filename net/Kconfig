@@ -202,7 +202,6 @@ config BRIDGE_NETFILTER
 source "net/netfilter/Kconfig"
 source "net/ipv4/netfilter/Kconfig"
 source "net/ipv6/netfilter/Kconfig"
-source "net/decnet/netfilter/Kconfig"
 source "net/bridge/netfilter/Kconfig"
 
 endif
@@ -219,7 +218,6 @@ source "net/802/Kconfig"
 source "net/bridge/Kconfig"
 source "net/dsa/Kconfig"
 source "net/8021q/Kconfig"
-source "net/decnet/Kconfig"
 source "net/llc/Kconfig"
 source "drivers/net/appletalk/Kconfig"
 source "net/x25/Kconfig"
@@ -486,3 +484,24 @@ config HAVE_CBPF_JIT
 # Extended BPF JIT (eBPF)
 config HAVE_EBPF_JIT
 	bool
+
+source "net/oplus_connectivity_sla/Kconfig"
+
+source "net/oplus_connectivity_luckymoney/Kconfig"
+
+config OPLUS_BUG_STABILITY
+	bool "add for disable tcp random timestamp,some networks limit tcp syn before login"
+
+source "net/oplus_connectivity_dhcp/Kconfig"
+
+source "net/oplus_score/Kconfig"
+
+source "net/oplus_apps_monitor/Kconfig"
+
+source "net/oplus_nwpower/Kconfig"
+
+source "net/oplus_modules/Kconfig"
+
+source "net/oplus_wificapcenter/Kconfig"
+
+source "net/oplus_wifi_wsa/Kconfig"

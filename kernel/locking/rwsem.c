@@ -34,6 +34,19 @@
 #include <trace/hooks/dtask.h>
 #include <trace/hooks/rwsem.h>
 
+#if defined(OPLUS_FEATURE_SCHED_ASSIST) && defined(CONFIG_MMAP_LOCK_OPT)
+#include <linux/mm.h>
+#include <linux/sched.h>
+#include <../sched/sched.h>
+#include <linux/sched/clock.h>
+#include <linux/rwsem.h>
+#endif
+
+#ifdef CONFIG_LOCKING_PROTECT
+#include <linux/sched_assist/sched_assist_locking.h>
+#include <../sched/sched.h>
+#endif
+
 /*
  * The least significant 3 bits of the owner value has the following
  * meanings when set.
@@ -345,6 +358,9 @@ void __init_rwsem(struct rw_semaphore *sem, const char *name,
 	osq_lock_init(&sem->osq);
 #endif
 	trace_android_vh_rwsem_init(sem);
+#if defined(OPLUS_FEATURE_SCHED_ASSIST) && defined(CONFIG_OPLUS_FEATURE_SCHED_ASSIST)
+	sem->ux_dep_task = NULL;
+#endif /* defined(OPLUS_FEATURE_SCHED_ASSIST) && defined(CONFIG_OPLUS_FEATURE_SCHED_ASSIST) */
 }
 EXPORT_SYMBOL(__init_rwsem);
 
@@ -420,6 +436,9 @@ static void rwsem_mark_wake(struct rw_semaphore *sem,
 
 	if (waiter->type == RWSEM_WAITING_FOR_WRITE) {
 		if (wake_type == RWSEM_WAKE_ANY) {
+#if defined(OPLUS_FEATURE_SCHED_ASSIST) && defined(CONFIG_MMAP_LOCK_OPT)
+			uxchain_rwsem_wake(waiter->task, sem);
+#endif
 			/*
 			 * Mark writer at the front of the queue for wakeup.
 			 * Until the task is actually later awoken later by
@@ -548,6 +567,9 @@ static void rwsem_mark_wake(struct rw_semaphore *sem,
 		 * to the task to wakeup.
 		 */
 		smp_store_release(&waiter->task, NULL);
+#if defined(OPLUS_FEATURE_SCHED_ASSIST) && defined(CONFIG_MMAP_LOCK_OPT)
+		uxchain_rwsem_wake(tsk, sem);
+#endif
 		/*
 		 * Ensure issuing the wakeup (either by us or someone else)
 		 * after setting the reader waiter to nil.
@@ -1070,6 +1092,9 @@ queue:
 	if (!already_on_list)
 		list_add_tail(&waiter.list, &sem->wait_list);
 
+#ifdef CONFIG_LOCKING_PROTECT
+	update_locking_time(jiffies, false);
+#endif
 	/* we're now waiting on the lock, but no longer actively locking */
 	if (adjustment)
 		count = atomic_long_add_return(adjustment, &sem->count);
@@ -1091,6 +1116,11 @@ queue:
 		rwsem_mark_wake(sem, RWSEM_WAKE_ANY, &wake_q);
 
 	trace_android_vh_rwsem_wake(sem);
+#if defined(OPLUS_FEATURE_SCHED_ASSIST) && defined(CONFIG_OPLUS_FEATURE_SCHED_ASSIST)
+	if (sysctl_sched_assist_enabled && !is_rwsem_reader_owned(sem)) {
+		rwsem_set_inherit_ux(current, waiter.task, rwsem_owner(sem), sem);
+	}
+#endif /* defined(OPLUS_FEATURE_SCHED_ASSIST) && defined(CONFIG_OPLUS_FEATURE_SCHED_ASSIST) */
 	raw_spin_unlock_irq(&sem->wait_lock);
 	wake_up_q(&wake_q);
 
@@ -1185,13 +1215,23 @@ rwsem_down_write_slowpath(struct rw_semaphore *sem, int state)
 
 	/* account for this before adding a new element to the list */
 	wstate = list_empty(&sem->wait_list) ? WRITER_FIRST : WRITER_NOT_FIRST;
-
+#if defined(OPLUS_FEATURE_SCHED_ASSIST) && defined(CONFIG_OPLUS_FEATURE_SCHED_ASSIST)
+	if (sysctl_sched_assist_enabled) {
+		already_on_list = rwsem_list_add(waiter.task, &waiter.list, &sem->wait_list);
+	}
+	locking_vh_alter_rwsem_list_add(
+					&waiter,
+					sem, &already_on_list);
+#endif /* defined(OPLUS_FEATURE_SCHED_ASSIST) && defined(CONFIG_OPLUS_FEATURE_SCHED_ASSIST) */
 	trace_android_vh_alter_rwsem_list_add(
 					&waiter,
 					sem, &already_on_list);
 	if (!already_on_list)
 		list_add_tail(&waiter.list, &sem->wait_list);
 
+#ifdef CONFIG_LOCKING_PROTECT
+	update_locking_time(jiffies, false);
+#endif
 	/* we're now waiting on the lock */
 	if (wstate == WRITER_NOT_FIRST) {
 		count = atomic_long_read(&sem->count);
@@ -1227,6 +1267,11 @@ rwsem_down_write_slowpath(struct rw_semaphore *sem, int state)
 
 wait:
 	trace_android_vh_rwsem_wake(sem);
+#if defined(OPLUS_FEATURE_SCHED_ASSIST) && defined(CONFIG_OPLUS_FEATURE_SCHED_ASSIST)
+	if (sysctl_sched_assist_enabled && !is_rwsem_reader_owned(sem)) {
+//		rwsem_set_inherit_ux(waiter.task, current, rwsem_owner(sem), sem);
+	}
+#endif /* defined(OPLUS_FEATURE_SCHED_ASSIST) && defined(CONFIG_OPLUS_FEATURE_SCHED_ASSIST) */
 	/* wait until we successfully acquire the lock */
 	trace_android_vh_rwsem_write_wait_start(sem);
 	set_current_state(state);
@@ -1330,6 +1375,11 @@ static struct rw_semaphore *rwsem_wake(struct rw_semaphore *sem, long count)
 	if (!list_empty(&sem->wait_list))
 		rwsem_mark_wake(sem, RWSEM_WAKE_ANY, &wake_q);
 
+#if defined(OPLUS_FEATURE_SCHED_ASSIST) && defined(CONFIG_OPLUS_FEATURE_SCHED_ASSIST)
+	if (sysctl_sched_assist_enabled) {
+		rwsem_unset_inherit_ux(sem, current);
+	}
+#endif /* defined(OPLUS_FEATURE_SCHED_ASSIST) && defined(CONFIG_OPLUS_FEATURE_SCHED_ASSIST) */
 	raw_spin_unlock_irqrestore(&sem->wait_lock, flags);
 	wake_up_q(&wake_q);
 
@@ -1367,6 +1417,9 @@ inline void __down_read(struct rw_semaphore *sem)
 		DEBUG_RWSEMS_WARN_ON(!is_rwsem_reader_owned(sem), sem);
 	} else {
 		rwsem_set_reader_owned(sem);
+#if defined(OPLUS_FEATURE_SCHED_ASSIST) && defined(CONFIG_MMAP_LOCK_OPT)
+		uxchain_rwsem_down(sem);
+#endif
 	}
 }
 
@@ -1378,6 +1431,9 @@ static inline int __down_read_killable(struct rw_semaphore *sem)
 		DEBUG_RWSEMS_WARN_ON(!is_rwsem_reader_owned(sem), sem);
 	} else {
 		rwsem_set_reader_owned(sem);
+#if defined(OPLUS_FEATURE_SCHED_ASSIST) && defined(CONFIG_MMAP_LOCK_OPT)
+		uxchain_rwsem_down(sem);
+#endif
 	}
 	return 0;
 }
@@ -1396,6 +1452,9 @@ static inline int __down_read_trylock(struct rw_semaphore *sem)
 		if (atomic_long_try_cmpxchg_acquire(&sem->count, &tmp,
 					tmp + RWSEM_READER_BIAS)) {
 			rwsem_set_reader_owned(sem);
+#if defined(OPLUS_FEATURE_SCHED_ASSIST) && defined(CONFIG_MMAP_LOCK_OPT)
+			uxchain_rwsem_down(sem);
+#endif
 			return 1;
 		}
 	} while (!(tmp & RWSEM_READ_FAILED_MASK));
@@ -1412,8 +1471,13 @@ static inline void __down_write(struct rw_semaphore *sem)
 	if (unlikely(!atomic_long_try_cmpxchg_acquire(&sem->count, &tmp,
 						      RWSEM_WRITER_LOCKED)))
 		rwsem_down_write_slowpath(sem, TASK_UNINTERRUPTIBLE);
-	else
+	else {
 		rwsem_set_owner(sem);
+#if defined(OPLUS_FEATURE_SCHED_ASSIST) && defined(CONFIG_MMAP_LOCK_OPT)
+		uxchain_rwsem_down(sem);
+#endif
+
+	}
 }
 
 static inline int __down_write_killable(struct rw_semaphore *sem)
@@ -1426,6 +1490,9 @@ static inline int __down_write_killable(struct rw_semaphore *sem)
 			return -EINTR;
 	} else {
 		rwsem_set_owner(sem);
+#if defined(OPLUS_FEATURE_SCHED_ASSIST) && defined(CONFIG_MMAP_LOCK_OPT)
+		uxchain_rwsem_down(sem);
+#endif
 	}
 	return 0;
 }
@@ -1440,6 +1507,10 @@ static inline int __down_write_trylock(struct rw_semaphore *sem)
 	if (atomic_long_try_cmpxchg_acquire(&sem->count, &tmp,
 					    RWSEM_WRITER_LOCKED)) {
 		rwsem_set_owner(sem);
+#if defined(OPLUS_FEATURE_SCHED_ASSIST) && defined(CONFIG_MMAP_LOCK_OPT)
+		uxchain_rwsem_down(sem);
+#endif
+
 		return true;
 	}
 	return false;
@@ -1463,6 +1534,9 @@ inline void __up_read(struct rw_semaphore *sem)
 		clear_wr_nonspinnable(sem);
 		rwsem_wake(sem, tmp);
 	}
+#if defined(OPLUS_FEATURE_SCHED_ASSIST) && defined(CONFIG_MMAP_LOCK_OPT)
+	uxchain_rwsem_up(sem);
+#endif
 }
 
 /*
@@ -1484,6 +1558,9 @@ static inline void __up_write(struct rw_semaphore *sem)
 	tmp = atomic_long_fetch_add_release(-RWSEM_WRITER_LOCKED, &sem->count);
 	if (unlikely(tmp & RWSEM_FLAG_WAITERS))
 		rwsem_wake(sem, tmp);
+#if defined(OPLUS_FEATURE_SCHED_ASSIST) && defined(CONFIG_MMAP_LOCK_OPT)
+	uxchain_rwsem_up(sem);
+#endif
 }
 
 /*
@@ -1517,6 +1594,9 @@ void __sched down_read(struct rw_semaphore *sem)
 	rwsem_acquire_read(&sem->dep_map, 0, 0, _RET_IP_);
 
 	LOCK_CONTENDED(sem, __down_read_trylock, __down_read);
+#ifdef CONFIG_LOCKING_PROTECT
+	record_locking_info(current, jiffies);
+#endif
 }
 EXPORT_SYMBOL(down_read);
 
@@ -1541,8 +1621,12 @@ int down_read_trylock(struct rw_semaphore *sem)
 {
 	int ret = __down_read_trylock(sem);
 
-	if (ret == 1)
+	if (ret == 1) {
 		rwsem_acquire_read(&sem->dep_map, 0, 1, _RET_IP_);
+		#ifdef CONFIG_LOCKING_PROTECT
+		record_locking_info(current, jiffies);
+		#endif
+	}
 	return ret;
 }
 EXPORT_SYMBOL(down_read_trylock);
@@ -1555,6 +1639,9 @@ void __sched down_write(struct rw_semaphore *sem)
 	might_sleep();
 	rwsem_acquire(&sem->dep_map, 0, 0, _RET_IP_);
 	LOCK_CONTENDED(sem, __down_write_trylock, __down_write);
+#ifdef CONFIG_LOCKING_PROTECT
+	record_locking_info(current, jiffies);
+#endif
 }
 EXPORT_SYMBOL(down_write);
 
@@ -1572,6 +1659,9 @@ int __sched down_write_killable(struct rw_semaphore *sem)
 		return -EINTR;
 	}
 
+#ifdef CONFIG_LOCKING_PROTECT
+	record_locking_info(current, jiffies);
+#endif
 	return 0;
 }
 EXPORT_SYMBOL(down_write_killable);
@@ -1583,8 +1673,12 @@ int down_write_trylock(struct rw_semaphore *sem)
 {
 	int ret = __down_write_trylock(sem);
 
-	if (ret == 1)
+	if (ret == 1) {
 		rwsem_acquire(&sem->dep_map, 0, 1, _RET_IP_);
+		#ifdef CONFIG_LOCKING_PROTECT
+		record_locking_info(current, jiffies);
+		#endif
+	}
 
 	return ret;
 }
@@ -1597,6 +1691,12 @@ void up_read(struct rw_semaphore *sem)
 {
 	rwsem_release(&sem->dep_map, 1, _RET_IP_);
 	__up_read(sem);
+#if defined(OPLUS_FEATURE_SCHED_ASSIST) && defined(CONFIG_MMAP_LOCK_OPT)
+	uxchain_rwsem_up(sem);
+#endif
+#ifdef CONFIG_LOCKING_PROTECT
+	record_locking_info(current, 0);
+#endif
 }
 EXPORT_SYMBOL(up_read);
 
@@ -1608,6 +1708,12 @@ void up_write(struct rw_semaphore *sem)
 	rwsem_release(&sem->dep_map, 1, _RET_IP_);
 	trace_android_vh_rwsem_write_finished(sem);
 	__up_write(sem);
+#if defined(OPLUS_FEATURE_SCHED_ASSIST) && defined(CONFIG_MMAP_LOCK_OPT)
+	uxchain_rwsem_up(sem);
+#endif
+#ifdef CONFIG_LOCKING_PROTECT
+	record_locking_info(current, 0);
+#endif
 }
 EXPORT_SYMBOL(up_write);
 
@@ -1629,6 +1735,9 @@ void down_read_nested(struct rw_semaphore *sem, int subclass)
 	might_sleep();
 	rwsem_acquire_read(&sem->dep_map, subclass, 0, _RET_IP_);
 	LOCK_CONTENDED(sem, __down_read_trylock, __down_read);
+#ifdef CONFIG_LOCKING_PROTECT
+	record_locking_info(current, jiffies);
+#endif
 }
 EXPORT_SYMBOL(down_read_nested);
 
@@ -1637,6 +1746,9 @@ void _down_write_nest_lock(struct rw_semaphore *sem, struct lockdep_map *nest)
 	might_sleep();
 	rwsem_acquire_nest(&sem->dep_map, 0, 0, nest, _RET_IP_);
 	LOCK_CONTENDED(sem, __down_write_trylock, __down_write);
+#ifdef CONFIG_LOCKING_PROTECT
+	record_locking_info(current, jiffies);
+#endif
 }
 EXPORT_SYMBOL(_down_write_nest_lock);
 
@@ -1645,6 +1757,9 @@ void down_read_non_owner(struct rw_semaphore *sem)
 	might_sleep();
 	__down_read(sem);
 	__rwsem_set_reader_owned(sem, NULL);
+#ifdef CONFIG_LOCKING_PROTECT
+	record_locking_info(current, jiffies);
+#endif
 }
 EXPORT_SYMBOL(down_read_non_owner);
 
@@ -1653,6 +1768,9 @@ void down_write_nested(struct rw_semaphore *sem, int subclass)
 	might_sleep();
 	rwsem_acquire(&sem->dep_map, subclass, 0, _RET_IP_);
 	LOCK_CONTENDED(sem, __down_write_trylock, __down_write);
+#ifdef CONFIG_LOCKING_PROTECT
+	record_locking_info(current, jiffies);
+#endif
 }
 EXPORT_SYMBOL(down_write_nested);
 
@@ -1667,6 +1785,9 @@ int __sched down_write_killable_nested(struct rw_semaphore *sem, int subclass)
 		return -EINTR;
 	}
 
+#ifdef CONFIG_LOCKING_PROTECT
+	record_locking_info(current, jiffies);
+#endif
 	return 0;
 }
 EXPORT_SYMBOL(down_write_killable_nested);
@@ -1675,6 +1796,12 @@ void up_read_non_owner(struct rw_semaphore *sem)
 {
 	DEBUG_RWSEMS_WARN_ON(!is_rwsem_reader_owned(sem), sem);
 	__up_read(sem);
+#if defined(OPLUS_FEATURE_SCHED_ASSIST) && defined(CONFIG_MMAP_LOCK_OPT)
+	uxchain_rwsem_up(sem);
+#endif
+#ifdef CONFIG_LOCKING_PROTECT
+	record_locking_info(current, 0);
+#endif
 }
 EXPORT_SYMBOL(up_read_non_owner);
 

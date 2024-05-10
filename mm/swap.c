@@ -373,9 +373,15 @@ static void __lru_cache_activate_page(struct page *page)
 void mark_page_accessed(struct page *page)
 {
 	page = compound_head(page);
+#ifdef CONFIG_MAPPED_PROTECT
+	mapped_page_try_sorthead(page);
+#endif
 	if (!PageActive(page) && !PageUnevictable(page) &&
+#ifdef CONFIG_MAPPED_PROTECT
+			(PageReferenced(page) || (page_mapcount(page) > 10))) {
+#else
 			PageReferenced(page)) {
-
+#endif
 		/*
 		 * If the page is on the LRU, queue it for activation via
 		 * activate_page_pvecs. Otherwise, assume the page is on a
@@ -763,8 +769,8 @@ void release_pages(struct page **pages, int nr)
 	LIST_HEAD(pages_to_free);
 	struct pglist_data *locked_pgdat = NULL;
 	struct lruvec *lruvec;
-	unsigned long uninitialized_var(flags);
-	unsigned int uninitialized_var(lock_batch);
+	unsigned long flags;
+	unsigned int lock_batch;
 
 	for (i = 0; i < nr; i++) {
 		struct page *page = pages[i];

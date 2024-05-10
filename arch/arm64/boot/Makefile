@@ -33,6 +33,8 @@ rtic_mp.dtb: vmlinux FORCE
 
 endif
 
+PGO_PROFILE := n
+
 $(obj)/Image: vmlinux FORCE
 	$(call if_changed,objcopy)
 

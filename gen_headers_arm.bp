@@ -202,7 +202,6 @@ gen_headers_out_arm = [
     "linux/dm-ioctl.h",
     "linux/dm-log-userspace.h",
     "linux/dma-buf.h",
-    "linux/dn.h",
     "linux/dns_resolver.h",
     "linux/dqblk_xfs.h",
     "linux/edd.h",
@@ -407,7 +406,6 @@ gen_headers_out_arm = [
     "linux/netfilter.h",
     "linux/netfilter_arp.h",
     "linux/netfilter_bridge.h",
-    "linux/netfilter_decnet.h",
     "linux/netfilter_ipv4.h",
     "linux/netfilter_ipv6.h",
     "linux/netlink.h",
@@ -636,6 +634,7 @@ gen_headers_out_arm = [
     "linux/vtpm_proxy.h",
     "linux/wait.h",
     "linux/watchdog.h",
+    "linux/watch_queue.h",
     "linux/wimax.h",
     "linux/wireless.h",
     "linux/wmi.h",
@@ -945,6 +944,12 @@ gen_headers_out_arm = [
     "linux/netfilter/ipset/ip_set_list.h",
     "linux/wil6210_uapi.h",
 
+    "linux/eavb_shared.h",
+    "linux/netfilter_ipv4/ipt_TRIGGER.h",
+    "linux/esoc_ctrl.h",
+    "linux/netfilter_ipv4/ipt_NATTYPE.h",
+    "linux/mhi.h",
+
     // From arch/arm/include/uapi/**/*.h
 
     "asm/auxvec.h",
@@ -987,6 +992,7 @@ gen_headers_out_arm = [
     "audio/linux/msm_audio_wma.h",
     "audio/linux/msm_audio_wmapro.h",
     "audio/linux/wcd-spi-ac-params.h",
+    "audio/linux/msm_audio_ar.h",
     "audio/sound/audio_effects.h",
     "audio/sound/audio_slimslave.h",
     "audio/sound/devdep_params.h",
@@ -1013,6 +1019,11 @@ gen_headers_out_arm = [
     "camera/media/cam_sensor.h",
     "camera/media/cam_sync.h",
     "camera/media/cam_tfe.h",
+    "camera/media/cam_isp_sfe.h",
+//ifdef OPLUS_FEATURE_CAMERA_COMMON
+    "camera/oplus/media/oplus_cam_sensor.h",
+    "camera/oplus/media/oplus_cam_defs.h",
+//endif
     "display/drm/msm_drm_pp.h",
     "display/drm/sde_drm.h",
     "display/media/mmm_color_fmt.h",
@@ -1047,9 +1058,9 @@ genrule {
 genrule {
     name: "qti_generate_kernel_headers_arm",
     tools: [
-        "headers_install.sh",
-        "unifdef",
-    ],
+		"headers_install.sh",
+		"unifdef",
+	],
     tool_files: [
         "kernel_headers.py",
         "arch/arm/tools/syscallhdr.sh",

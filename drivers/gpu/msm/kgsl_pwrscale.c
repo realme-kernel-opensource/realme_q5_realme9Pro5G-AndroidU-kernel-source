@@ -860,7 +860,13 @@ int kgsl_pwrscale_init(struct kgsl_device *device, struct platform_device *pdev,
 			adreno_tz_data.bus.floating = false;
 	}
 
+#if defined(OPLUS_FEATURE_SCHED_ASSIST) && defined(CONFIG_OPLUS_FEATURE_SCHED_ASSIST)
+	if (sysctl_sched_assist_enabled)
+		pwrscale->devfreq_wq = alloc_workqueue("kgsl_devfreq_wq",
+			__WQ_LEGACY | WQ_FREEZABLE | WQ_UNBOUND | WQ_MEM_RECLAIM | WQ_UX, 1);
+#else
 	pwrscale->devfreq_wq = create_freezable_workqueue("kgsl_devfreq_wq");
+#endif
 	if (!pwrscale->devfreq_wq) {
 		dev_err(device->dev, "Failed to allocate kgsl devfreq workqueue\n");
 		device->pwrscale.enabled = false;
